@@ -97,6 +97,7 @@ function VideoPanel({ stream }: { stream: MediaStream }) {
 function App() {
   const [peerId, setPeerId] = useState('')
   const [videos, setVideos] = useState<MediaStream[]>([])
+  const smartphoneUrl = `${window.location.origin}${import.meta.env.BASE_URL}?host=${peerId}`
 
   useEffect(() => {
     const peer = new Peer()
@@ -155,13 +156,13 @@ function App() {
       {peerId && (
         <div className="mt-6 inline-block rounded bg-white p-4">
           <a
-            href={`${window.location.origin}/?host=${peerId}`}
+            href={smartphoneUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block"
           >
             <QRCodeSVG
-              value={`${window.location.origin}/?host=${peerId}`}
+              value={smartphoneUrl}
               size={200}
             />
           </a>
