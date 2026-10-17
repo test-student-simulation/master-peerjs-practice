@@ -1,36 +1,46 @@
 import { useEffect, useRef, useState } from 'react'
-import Peer from 'peerjs'
+import Peer, { type DataConnection } from 'peerjs'
 import { QRCodeSVG } from 'qrcode.react'
 
 function Smartphone({ hostId }: { hostId: string }) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const connRef = useRef<DataConnection | null>(null)
+  const [message, setMessage] = useState('ドン！')
 
   useEffect(() => {
     let stream: MediaStream | null = null
     const peer = new Peer()
-    let cancelled = false
-    let peerReady = false
 
     function tryCall() {
-      if (peerReady && stream && !cancelled) {
+      if (peer.open && stream) {
         peer.call(hostId, stream)
+
+        const conn = peer.connect(hostId)
+        conn.on('open', () => {
+          connRef.current = conn
+          conn.send('接続完了!')
+        })
+        conn.on('close', () => {
+          if (connRef.current == conn) {
+            connRef.current = null
+          }
+        })
       }
     }
 
+    peer.on('open', () => {
+      tryCall()
+    })
+
+
     async function startCamera() {
       try {
-        // PeerServerへの接続完了を待つ
-        peer.on('open', () => {
-          peerReady = true
-          tryCall()
-        })
-
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment' },
           audio: false,
         })
 
-        if (cancelled) {
+        if (peer.destroyed) {
           stream.getTracks().forEach((track) => track.stop())
           return
         }
@@ -44,25 +54,40 @@ function Smartphone({ hostId }: { hostId: string }) {
         console.error('カメラの取得に失敗しました', error)
       }
     }
-
     startCamera()
 
     return () => {
-      cancelled = true
       stream?.getTracks().forEach((track) => track.stop())
+      stream = null
+      connRef.current = null
       peer.destroy()
     }
   }, [hostId])
 
   return (
-    <div className="h-dvh overflow-hidden bg-blue-100 p-4">
-      <h1 className="mb-4 text-2xl font-bold">
-        スマホカメラ
-      </h1>
-
-      <p className="mb-4 break-all">
-        接続先PC：{hostId}
-      </p>
+    <div
+      onClick={() => {
+        if (connRef.current && connRef.current.open) {
+          connRef.current.send(message)
+        }
+      }}
+      className="h-dvh overflow-hidden bg-blue-100 p-4"
+    >
+      <div className="flex flex-row items-center gap-4">
+        <h1 className="mb-4 text-sm font-bold">
+          スマホカメラ
+        </h1>
+        <p className="mb-4 break-all">
+          接続先PC：{hostId}
+        </p>
+      </div>
+      <input
+        type="text"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        className="mb-4 rounded border bg-white p-2"
+        placeholder="送信する文字"
+      />
 
       <video
         ref={videoRef}
@@ -75,7 +100,19 @@ function Smartphone({ hostId }: { hostId: string }) {
   )
 }
 
-function VideoPanel({ stream }: { stream: MediaStream }) {
+function VideoPanel({
+  stream,
+  effects,
+}: {
+  stream: MediaStream
+  effects: {
+    id: number
+    peerId: string
+    text: string
+    x: number
+    y: number
+  }[]
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -85,18 +122,40 @@ function VideoPanel({ stream }: { stream: MediaStream }) {
   }, [stream])
 
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted
-      className="w-full rounded bg-black"
-    />
+    <div className="relative [container-type:inline-size]">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="w-full rounded bg-black"
+      />
+
+      {effects.map((effect) => (
+        <span
+          key={effect.id}
+          className="pointer-events-none absolute animate-[floatUp_1s_ease-out_forwards] text-xs font-black text-white"
+          style={{
+            left: `${effect.x}%`,
+            bottom: `${effect.y}%`,
+          }}
+        >
+          {effect.text}
+        </span>
+      ))}
+    </div>
   )
 }
 function App() {
+
   const [peerId, setPeerId] = useState('')
-  const [videos, setVideos] = useState<MediaStream[]>([])
+  const [videos, setVideos] = useState<
+    { peerId: string; stream: MediaStream }[]
+  >([])
+  const [effects, setEffects] = useState<
+    { id: number; peerId: string; text: string; x: number; y: number }[]
+  >([])
+
   const smartphoneUrl = `${window.location.origin}${import.meta.env.BASE_URL}?host=${peerId}`
 
   useEffect(() => {
@@ -104,6 +163,21 @@ function App() {
 
     peer.on('open', (id) => {
       setPeerId(id)
+    })
+
+    peer.on('connection', (conn) => {
+      conn.on('data', (data) => {
+        setEffects((prev) => [
+          ...prev,
+          {
+            id: Date.now() + Math.random(),
+            peerId: conn.peer,
+            text: String(data),
+            x: 30 + Math.random() * 40,
+            y: 10 + Math.random() * 20,
+          },
+        ])
+      })
     })
 
     peer.on('call', (call) => {
@@ -114,14 +188,14 @@ function App() {
       function removeVideo() {
         if (streamId) {
           setVideos((prev) =>
-            prev.filter((stream) => stream.id !== streamId)
+            prev.filter((video) => video.stream.id !== streamId)
           )
         }
       }
 
       call.on('stream', (stream) => {
         streamId = stream.id
-        setVideos((prev) => [...prev, stream])
+        setVideos((prev) => [...prev, { peerId: call.peer, stream }])
 
         const connection = call.peerConnection
         connection.addEventListener('connectionstatechange', () => {
@@ -149,32 +223,37 @@ function App() {
         スマホ映像モニター
       </h1>
 
-      <p>PCのPeer ID：</p>
-      <p className="mt-2 break-all rounded bg-white p-4">
+      <p>PCのPeer ID：<span className="mt-2 break-all rounded bg-white p-4">
         {peerId || '接続待機中...'}
-      </p>
+      </span></p>
       {peerId && (
-        <div className="mt-6 inline-block rounded bg-white p-4">
-          <a
-            href={smartphoneUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block"
-          >
-            <QRCodeSVG
-              value={smartphoneUrl}
-              size={200}
-            />
-          </a>
+        <div className="flex flex-row items-center gap-4">
+          <div className="mt-6 inline-block rounded bg-white p-4">
+            <a
+              href={smartphoneUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block"
+            >
+              <QRCodeSVG
+                value={smartphoneUrl}
+                size={200}
+              />
+            </a>
+          </div>
+          <h2 className="mt-8 mb-4 text-xl font-bold">
+            接続中のスマホ：{videos.length}台
+          </h2>
         </div>
       )}
-      <h2 className="mt-8 mb-4 text-xl font-bold">
-        接続中のスマホ：{videos.length}台
-      </h2>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {videos.map((stream) => (
-          <VideoPanel key={stream.id} stream={stream} />
+      <div className="grid grid-cols-6 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {videos.map((video) => (
+          <VideoPanel
+            key={video.stream.id}
+            stream={video.stream}
+            effects={effects.filter((effect) => effect.peerId === video.peerId)}
+          />
         ))}
       </div>
     </div>
