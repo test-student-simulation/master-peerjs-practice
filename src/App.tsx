@@ -118,6 +118,7 @@ function VideoPanel({
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.srcObject = stream
+      videoRef.current.play().catch((err) => console.error('再生エラー:', err))
     }
   }, [stream])
 
