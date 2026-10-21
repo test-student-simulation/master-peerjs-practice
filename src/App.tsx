@@ -5,6 +5,7 @@ import { QRCodeSVG } from 'qrcode.react'
 function Smartphone({ hostId }: { hostId: string }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const connRef = useRef<DataConnection | null>(null)
+  const [cameraSettings, setCameraSettings] = useState<MediaTrackSettings | null>(null)
   const [message, setMessage] = useState('ドン！')
 
   useEffect(() => {
@@ -39,6 +40,7 @@ function Smartphone({ hostId }: { hostId: string }) {
           video: { facingMode: 'environment' },
           audio: false,
         })
+        setCameraSettings(stream.getVideoTracks()[0].getSettings())
 
         if (peer.destroyed) {
           stream.getTracks().forEach((track) => track.stop())
@@ -94,8 +96,11 @@ function Smartphone({ hostId }: { hostId: string }) {
         autoPlay
         playsInline
         muted
-        className="w-full rounded bg-black"
+        className="rounded bg-black"
       />
+      <pre className="mt-4 max-h-32 overflow-auto rounded text-xs">
+        {JSON.stringify(cameraSettings)?.slice(1, -1).replaceAll(',', '\n')}
+      </pre>
     </div>
   )
 }
@@ -248,7 +253,7 @@ function App() {
         </div>
       )}
 
-      <div className="grid grid-cols-6 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 items-start gap-4 md:grid-cols-3 lg:grid-cols-4">
         {videos.map((video) => (
           <VideoPanel
             key={video.stream.id}
